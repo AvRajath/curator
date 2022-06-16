@@ -12,7 +12,8 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
           "pods_limit_cpu_core_total[millicore]" numeric,
           "pods_avg_usage_memory_total[MB]" numeric,
           "pods_request_memory_total[MB]" numeric,
-          "pods_limit_memory_total[MB]" numeric
+          "pods_limit_memory_total[MB]" numeric,
+          "persistentvolumeclaim_usage_total[MB]" numeric
 )
   as $$
   declare
@@ -47,7 +48,9 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
           "pods_limit_cpu_core_total[millicore]", -- granularity = minute
           "pods_avg_usage_memory_total[MB]", -- granularity = minute
           "pods_request_memory_total[MB]", -- granularity = minute
-          "pods_limit_memory_total[MB]" -- granularity = minute
+          "pods_limit_memory_total[MB]", -- granularity = minute
+          "persistentvolumeclaim_usage_total[MB]" -- granularity = minute
+
         )
       SELECT
       ' || quote_literal(frequency_) || ' as frequency,
@@ -59,7 +62,8 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
         round(SUM(pod_limit_cpu_core), 2),
         round(SUM(pod_avg_usage_memory) / 1024 / 1024, 0),
         round(SUM(pod_request_memory) / 1024 / 1024, 0 ),
-        round(SUM(pod_limit_memory) / 1024 / 1024, 0 )
+        round(SUM(pod_limit_memory) / 1024 / 1024, 0 ),
+        round(SUM(persistentvolumeclaim_usage) / 1024 / 1024, 0 )
       FROM
         (SELECT
           namespace,
@@ -68,10 +72,17 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
           (MAX(pod_limit_cpu_core_seconds) / 3600 * 1000 )::numeric      as pod_limit_cpu_core,
           (SUM(pod_usage_memory_byte_seconds)   / ' || quote_literal(total_seconds) || ')::numeric as pod_avg_usage_memory,
           (MAX(pod_request_memory_byte_seconds) / 3600 )::numeric as pod_request_memory,
-          (MAX(pod_limit_memory_byte_seconds)   / 3600 )::numeric as pod_limit_memory
-        FROM logs_2
-        WHERE interval_start >= ' || quote_literal(interval_start_date) || ' and interval_start < ' || quote_literal(interval_end_date) || '
-        GROUP BY (namespace, pod, node))
+          (MAX(pod_limit_memory_byte_seconds)   / 3600 )::numeric as pod_limit_memory,
+          (MAX(volume_request_storage_byte_seconds)   / 3600 )::numeric as persistentvolumeclaim_usage
+        FROM (SELECT namespace, pod, interval_start, pod_usage_cpu_core_seconds, pod_request_cpu_core_seconds, pod_limit_cpu_core_seconds,
+               pod_usage_memory_byte_seconds, pod_request_memory_byte_seconds, pod_limit_memory_byte_seconds,
+               0 AS volume_request_storage_byte_seconds FROM logs_2
+               UNION ALL
+               SELECT namespace, pod, interval_start, 0.0 AS pod_usage_cpu_core_seconds, 0.0 AS pod_request_cpu_core_seconds,
+               0.0 AS pod_limit_cpu_core_seconds, 0.0 AS pod_usage_memory_byte_seconds, 0.0 AS pod_request_memory_byte_seconds,
+               0.0 AS pod_limit_memory_byte_seconds, volume_request_storage_byte_seconds FROM logs_3) AS temp
+        WHERE temp.interval_start >= ' || quote_literal(interval_start_date) || ' and temp.interval_start < ' || quote_literal(interval_end_date) || '
+        GROUP BY (namespace, pod))
       AS t
       GROUP BY namespace returning *';
 end; $$ LANGUAGE plpgsql;

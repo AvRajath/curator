@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS public.reports
   node_capacity_cpu_core_seconds double precision,
   node_capacity_memory_bytes double precision,
   node_capacity_memory_byte_seconds double precision,
+  persistentvolumeclaim_usage_byte_seconds double precision,
   namespace text
 );
 
@@ -95,5 +96,6 @@ CREATE TABLE IF NOT EXISTS public.reports_human(
           "pods_limit_cpu_core_total[millicore]" numeric,
           "pods_avg_usage_memory_total[MB]" numeric,
           "pods_request_memory_total[MB]" numeric,
-          "pods_limit_memory_total[MB]" numeric
+          "pods_limit_memory_total[MB]" numeric,
+          "persistentvolumeclaim_usage_total[MB]" numeric
 );
