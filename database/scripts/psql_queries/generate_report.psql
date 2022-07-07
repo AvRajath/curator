@@ -13,7 +13,10 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
           "pods_avg_usage_memory_total[MB]" numeric,
           "pods_request_memory_total[MB]" numeric,
           "pods_limit_memory_total[MB]" numeric,
-          "persistentvolumeclaim_usage_total[MB]" numeric
+          "persistent_volume_claim_usage_total[GB]" double precision,
+          "volume_storage_request_total[GB]" double precision,
+          "persistent_volume_claim_capacity_total[GB]" double precision
+
 )
   as $$
   declare
@@ -49,8 +52,9 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
           "pods_avg_usage_memory_total[MB]", -- granularity = minute
           "pods_request_memory_total[MB]", -- granularity = minute
           "pods_limit_memory_total[MB]", -- granularity = minute
-          "persistentvolumeclaim_usage_total[MB]" -- granularity = minute
-
+          "volume_storage_request_total[GB]", -- granularity = minute
+          "persistent_volume_claim_capacity_total[GB]", -- granularity = minute
+          "persistent_volume_claim_usage_total[GB]" -- granularity = minute
         )
       SELECT
       ' || quote_literal(frequency_) || ' as frequency,
@@ -63,7 +67,9 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
         round(SUM(pod_avg_usage_memory) / 1024 / 1024, 0),
         round(SUM(pod_request_memory) / 1024 / 1024, 0 ),
         round(SUM(pod_limit_memory) / 1024 / 1024, 0 ),
-        round(SUM(persistentvolumeclaim_usage) / 1024 / 1024, 0 )
+        round(SUM(volume_storage_request) / 1024 / 1024 / 1024, 2 ),
+        round(SUM(persistent_volume_claim_usage) / 1024 / 1024 / 1024, 2 ),
+        round(SUM(persistent_volume_claim_capacity) / 1024 / 1024 / 1024, 2 )
       FROM
         (SELECT
           namespace,
@@ -73,14 +79,18 @@ CREATE OR REPLACE FUNCTION generate_report (frequency_ text)
           (SUM(pod_usage_memory_byte_seconds)   / ' || quote_literal(total_seconds) || ')::numeric as pod_avg_usage_memory,
           (MAX(pod_request_memory_byte_seconds) / 3600 )::numeric as pod_request_memory,
           (MAX(pod_limit_memory_byte_seconds)   / 3600 )::numeric as pod_limit_memory,
-          (MAX(volume_request_storage_byte_seconds)   / 3600 )::numeric as persistentvolumeclaim_usage
+          (MAX(volume_request_storage_byte_seconds)   / 3600 )::numeric as volume_storage_request,
+          (MAX(persistentvolumeclaim_capacity_byte_seconds)   / 3600 )::numeric as persistent_volume_claim_capacity,
+          (MAX(persistentvolumeclaim_usage_byte_seconds)   / 3600 )::numeric as persistent_volume_claim_usage
         FROM (SELECT namespace, pod, interval_start, pod_usage_cpu_core_seconds, pod_request_cpu_core_seconds, pod_limit_cpu_core_seconds,
                pod_usage_memory_byte_seconds, pod_request_memory_byte_seconds, pod_limit_memory_byte_seconds,
-               0 AS volume_request_storage_byte_seconds FROM logs_2
+               0 AS volume_request_storage_byte_seconds, 0 AS persistentvolumeclaim_capacity_byte_seconds, 0 AS persistentvolumeclaim_usage_byte_seconds
+               FROM logs_2
                UNION ALL
                SELECT namespace, pod, interval_start, 0.0 AS pod_usage_cpu_core_seconds, 0.0 AS pod_request_cpu_core_seconds,
                0.0 AS pod_limit_cpu_core_seconds, 0.0 AS pod_usage_memory_byte_seconds, 0.0 AS pod_request_memory_byte_seconds,
-               0.0 AS pod_limit_memory_byte_seconds, volume_request_storage_byte_seconds FROM logs_3) AS temp
+               0.0 AS pod_limit_memory_byte_seconds, volume_request_storage_byte_seconds, persistentvolumeclaim_capacity_byte_seconds,
+               persistentvolumeclaim_usage_byte_seconds FROM logs_3) AS temp
         WHERE temp.interval_start >= ' || quote_literal(interval_start_date) || ' and temp.interval_start < ' || quote_literal(interval_end_date) || '
         GROUP BY (namespace, pod))
       AS t
@@ -90,20 +100,20 @@ end; $$ LANGUAGE plpgsql;
 
 --CREATE OR REPLACE FUNCTION generate_report_api (frequency_ text, reportingEnd timestamp with time zone default current_date - interval '1 day')
 --  returns TABLE (
---	frequency text,
---	interval_start timestamp with time zone,
+--  frequency text,
+--  interval_start timestamp with time zone,
 --    interval_end timestamp with time zone,
 --    namespace text,
---	pod_usage_cpu_core_seconds double precision,
---	pod_request_cpu_core_seconds double precision,
---	pod_limit_cpu_core_seconds double precision,
---	pod_usage_memory_byte_seconds double precision,
---	pod_request_memory_byte_seconds double precision,
---	pod_limit_memory_byte_seconds double precision,
---	node_capacity_cpu_cores double precision,
---	node_capacity_cpu_core_seconds double precision,
---	node_capacity_memory_bytes double precision,
---	node_capacity_memory_byte_seconds double precision
+--  pod_usage_cpu_core_seconds double precision,
+--  pod_request_cpu_core_seconds double precision,
+--  pod_limit_cpu_core_seconds double precision,
+--  pod_usage_memory_byte_seconds double precision,
+--  pod_request_memory_byte_seconds double precision,
+--  pod_limit_memory_byte_seconds double precision,
+--  node_capacity_cpu_cores double precision,
+--  node_capacity_cpu_core_seconds double precision,
+--  node_capacity_memory_bytes double precision,
+--  node_capacity_memory_byte_seconds double precision
 --)
 --  as $$
 --  declare
@@ -111,14 +121,14 @@ end; $$ LANGUAGE plpgsql;
 --    interval_end_date timestamp with time zone := date_trunc('day', reportingEnd) + interval '1 day' - interval '1 second';
 --    valid_end_date timestamp with time zone := date_trunc('day', current_date) ;
 --  begin
---  	if frequency_ = 'day' then
---    	interval_start_date := date_trunc('day', reportingEnd);
+--    if frequency_ = 'day' then
+--      interval_start_date := date_trunc('day', reportingEnd);
 --    end if;
---  	if frequency_ = 'week' then
+--    if frequency_ = 'week' then
 --        interval_start_date := date_trunc('day', reportingEnd) - interval '6 days';
 --    end if;
 --    if frequency_ = 'month' then
---    	interval_start_date := date_trunc('day', reportingEnd) - interval '29 days';
+--      interval_start_date := date_trunc('day', reportingEnd) - interval '29 days';
 --    end if;
 --    if reportingEnd >= valid_end_date then
 --    RAISE EXCEPTION 'Querying future timestamp reportingEnd = (%). To get complete result, reportingEnd <= (%)', reportingEnd, valid_end_date;
@@ -144,3 +154,61 @@ end; $$ LANGUAGE plpgsql;
 --      GROUP BY namespace';
 --end; $$ LANGUAGE plpgsql;
 
+
+
+
+--CREATE OR REPLACE FUNCTION generate_report_api (frequency_ text, reportingEnd timestamp with time zone default current_date - interval '1 day')
+--  returns TABLE (
+--  frequency text,
+--  interval_start timestamp with time zone,
+--    interval_end timestamp with time zone,
+--    namespace text,
+--  pod_usage_cpu_core_seconds double precision,
+--  pod_request_cpu_core_seconds double precision,
+--  pod_limit_cpu_core_seconds double precision,
+--  pod_usage_memory_byte_seconds double precision,
+--  pod_request_memory_byte_seconds double precision,
+--  pod_limit_memory_byte_seconds double precision,
+--  node_capacity_cpu_cores double precision,
+--  node_capacity_cpu_core_seconds double precision,
+--  node_capacity_memory_bytes double precision,
+--  node_capacity_memory_byte_seconds double precision
+--)
+--  as $$
+--  declare
+--    interval_start_date timestamp with time zone;
+--    interval_end_date timestamp with time zone := date_trunc('day', reportingEnd) + interval '1 day' - interval '1 second';
+--    valid_end_date timestamp with time zone := date_trunc('day', current_date) ;
+--  begin
+--    if frequency_ = 'day' then
+--      interval_start_date := date_trunc('day', reportingEnd);
+--    end if;
+--    if frequency_ = 'week' then
+--        interval_start_date := date_trunc('day', reportingEnd) - interval '6 days';
+--    end if;
+--    if frequency_ = 'month' then
+--      interval_start_date := date_trunc('day', reportingEnd) - interval '29 days';
+--    end if;
+--    if reportingEnd >= valid_end_date then
+--    RAISE EXCEPTION 'Querying future timestamp reportingEnd = (%). To get complete result, reportingEnd <= (%)', reportingEnd, valid_end_date;
+--    end if;
+--    RETURN QUERY EXECUTE '
+--      SELECT
+--        ' || quote_literal(frequency_) || ' as frequency,
+--        ' || quote_literal(interval_start_date) || '::timestamp with time zone  as interval_start,
+--        ' || quote_literal(interval_end_date) || '::timestamp with time zone  as interval_end,
+--        namespace,
+--        SUM(pod_usage_cpu_core_seconds)       as pod_usage_cpu_core_seconds,
+--        MAX(pod_request_cpu_core_seconds)     as pod_request_cpu_core_seconds,
+--        MAX(pod_limit_cpu_core_seconds)       as pod_limit_cpu_core_seconds,
+--        SUM(pod_usage_memory_byte_seconds)    as pod_usage_memory_byte_seconds,
+--        MAX(pod_request_memory_byte_seconds)  as pod_request_memory_byte_seconds,
+--        MAX(pod_limit_memory_byte_seconds)    as pod_limit_memory_byte_seconds,
+--        MAX(node_capacity_cpu_cores)          as node_capacity_cpu_cores,
+--        MAX(node_capacity_cpu_core_seconds)   as  node_capacity_cpu_core_seconds,
+--        MAX(node_capacity_memory_bytes)       as  node_capacity_memory_bytes,
+--        MAX(node_capacity_memory_byte_seconds)as  node_capacity_memory_byte_seconds
+--      FROM logs_2
+--      WHERE logs_2.interval_start >= ' || quote_literal(interval_start_date) || ' and logs_2.interval_end <= ' || quote_literal(interval_end_date) || '
+--      GROUP BY namespace';
+--end; $$ LANGUAGE plpgsql;

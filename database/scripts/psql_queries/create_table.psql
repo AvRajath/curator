@@ -97,5 +97,7 @@ CREATE TABLE IF NOT EXISTS public.reports_human(
           "pods_avg_usage_memory_total[MB]" numeric,
           "pods_request_memory_total[MB]" numeric,
           "pods_limit_memory_total[MB]" numeric,
-          "persistentvolumeclaim_usage_total[MB]" numeric
+          "volume_storage_request_total[GB]" double precision,
+          "persistent_volume_claim_capacity_total[GB]" double precision,
+          "persistent_volume_claim_usage_total[GB]" double precision
 );
